@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y curl ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+RUN npm install -g @anthropic-ai/claude-code --no-audit --no-fund --prefer-offline=false
 
 # Persistent data directory
 RUN mkdir -p /data
