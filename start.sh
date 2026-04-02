@@ -3,6 +3,19 @@ set -e
 
 echo "=== Claude Telegram Bridge Startup ==="
 
+# Install claude-code to persistent volume if not already installed
+CLAUDE_BIN_DIR="${DATA_DIR:-/data}/npm-global/bin"
+if [ ! -f "$CLAUDE_BIN_DIR/claude" ]; then
+  echo "Installing @anthropic-ai/claude-code to persistent volume (one-time)..."
+  npm install -g @anthropic-ai/claude-code \
+    --prefix "${DATA_DIR:-/data}/npm-global" \
+    --no-audit --no-fund
+  echo "Installation complete."
+else
+  echo "claude-code already installed, skipping."
+fi
+export PATH="$CLAUDE_BIN_DIR:$PATH"
+
 # Use persistent volume for .claude dir so session survives restarts
 CLAUDE_DATA_DIR="${DATA_DIR:-/data}/.claude"
 mkdir -p "$CLAUDE_DATA_DIR"
