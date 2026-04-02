@@ -7,8 +7,18 @@ const Anthropic = require("@anthropic-ai/sdk");
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 
-const API_KEY = process.env.ANTHROPIC_API_KEY;
-if (!API_KEY) { console.error("ANTHROPIC_API_KEY required"); process.exit(1); }
+let API_KEY = process.env.ANTHROPIC_API_KEY;
+
+// If CLAUDE_OAUTH_CREDENTIALS is set, prefer the OAuth access token over the API key
+if (process.env.CLAUDE_OAUTH_CREDENTIALS) {
+  try {
+    const creds = JSON.parse(process.env.CLAUDE_OAUTH_CREDENTIALS);
+    const token = creds?.claudeAiOauth?.accessToken;
+    if (token) { API_KEY = token; console.log("Using OAuth access token from CLAUDE_OAUTH_CREDENTIALS"); }
+  } catch (e) { console.error("Failed to parse CLAUDE_OAUTH_CREDENTIALS:", e.message); }
+}
+
+if (!API_KEY) { console.error("ANTHROPIC_API_KEY or CLAUDE_OAUTH_CREDENTIALS required"); process.exit(1); }
 
 const AUTHORIZED_USER_ID = parseInt(process.env.AUTHORIZED_USER_ID || "6678076145", 10);
 const TELEGRAM_MAX_LENGTH = 4096;
