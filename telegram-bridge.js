@@ -116,7 +116,6 @@ function runClaude(prompt, chatId) {
       prompt,
       "--output-format",
       "json",
-      "--dangerously-skip-permissions",
     ];
 
     const sessionId = sessions.get(chatId);
