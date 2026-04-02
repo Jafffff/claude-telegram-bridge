@@ -1,31 +1,26 @@
 FROM node:20-slim
 
-# System deps for Claude Code (it needs git for some operations)
+# System deps
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git ca-certificates && \
+    apt-get install -y --no-install-recommends git ca-certificates curl tmux && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code globally
+# Create non-root user (Claude Code blocks --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash claude
+USER claude
+WORKDIR /home/claude
+
+# Install Claude Code globally for this user
 RUN npm install -g @anthropic-ai/claude-code
 
-# App directory
-WORKDIR /app
+# Persistent volume for auth, config, channels
+VOLUME /home/claude/.claude
 
-# Install Node dependencies
-COPY package.json ./
-RUN npm install --production
+# Copy startup script
+COPY --chown=claude:claude start.sh /home/claude/start.sh
+RUN chmod +x /home/claude/start.sh
 
-# Copy bridge script
-COPY telegram-bridge.js ./
-
-# Persistent volume for Claude auth/config and session data
-VOLUME /root/.claude
-
-# Environment variables (override at runtime)
-ENV CLAUDE_CODE_HEADLESS=1
 ENV DISABLE_AUTOUPDATER=1
-# TELEGRAM_BOT_TOKEN must be provided at runtime
-# ANTHROPIC_API_KEY must be provided at runtime
-# AUTHORIZED_USER_ID defaults to 6678076145 in the script
+ENV HOME=/home/claude
 
-CMD ["node", "telegram-bridge.js"]
+CMD ["/home/claude/start.sh"]
