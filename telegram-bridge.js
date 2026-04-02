@@ -1,5 +1,7 @@
 const TelegramBot = require("node-telegram-bot-api");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
+const fs = require("fs");
+const path = require("path");
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -13,6 +15,43 @@ if (!TELEGRAM_TOKEN) {
 const AUTHORIZED_USER_ID = parseInt(process.env.AUTHORIZED_USER_ID || "6678076145", 10);
 const REQUEST_TIMEOUT_MS = parseInt(process.env.REQUEST_TIMEOUT_MS || String(5 * 60 * 1000), 10); // 5 min
 const TELEGRAM_MAX_LENGTH = 4096;
+
+// ---------------------------------------------------------------------------
+// Ensure Claude auth credentials are in place
+// ---------------------------------------------------------------------------
+function setupCredentials() {
+  // If CLAUDE_OAUTH_CREDENTIALS env var is set, write it to the credentials file
+  const oauthCreds = process.env.CLAUDE_OAUTH_CREDENTIALS;
+  if (oauthCreds) {
+    const credsDir = path.join(process.env.HOME || "/root", ".claude");
+    const credsFile = path.join(credsDir, "credentials.json");
+    try {
+      fs.mkdirSync(credsDir, { recursive: true });
+      fs.writeFileSync(credsFile, oauthCreds, { mode: 0o600 });
+      console.log("Wrote OAuth credentials to", credsFile);
+    } catch (e) {
+      console.error("Failed to write credentials:", e.message);
+    }
+  }
+
+  // Ensure .claude.json config exists
+  const configFile = path.join(process.env.HOME || "/root", ".claude.json");
+  if (!fs.existsSync(configFile)) {
+    try {
+      fs.writeFileSync(configFile, JSON.stringify({
+        permissions: {
+          allow: ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)"]
+        },
+        skipDangerousModePermissionPrompt: true
+      }));
+      console.log("Created .claude.json config");
+    } catch (e) {
+      console.error("Failed to create .claude.json:", e.message);
+    }
+  }
+}
+
+setupCredentials();
 
 // ---------------------------------------------------------------------------
 // State
@@ -55,14 +94,11 @@ function splitMessage(text) {
       break;
     }
 
-    // Try to split at a newline near the limit
     let splitIdx = remaining.lastIndexOf("\n", TELEGRAM_MAX_LENGTH);
     if (splitIdx < TELEGRAM_MAX_LENGTH * 0.3) {
-      // If newline is too early, try a space
       splitIdx = remaining.lastIndexOf(" ", TELEGRAM_MAX_LENGTH);
     }
     if (splitIdx < TELEGRAM_MAX_LENGTH * 0.3) {
-      // Hard split
       splitIdx = TELEGRAM_MAX_LENGTH;
     }
 
@@ -82,12 +118,11 @@ async function sendReply(chatId, text, replyToMessageId) {
     try {
       await bot.sendMessage(chatId, chunks[i], opts);
     } catch (err) {
-      // Telegram rate-limit: retry after the specified time
       if (err.response && err.response.statusCode === 429) {
         const retryAfter = (err.response.body?.parameters?.retry_after || 5) * 1000;
         console.warn(`Rate limited. Retrying after ${retryAfter}ms`);
         await new Promise((r) => setTimeout(r, retryAfter));
-        i--; // retry this chunk
+        i--;
       } else {
         console.error("Failed to send message:", err.message);
       }
@@ -99,8 +134,7 @@ async function sendReply(chatId, text, replyToMessageId) {
 function startTypingLoop(chatId) {
   const interval = setInterval(() => {
     bot.sendChatAction(chatId, "typing").catch(() => {});
-  }, 4000); // Telegram typing indicator lasts ~5s, refresh every 4s
-  // Also fire one immediately
+  }, 4000);
   bot.sendChatAction(chatId, "typing").catch(() => {});
   return interval;
 }
@@ -129,6 +163,7 @@ function runClaude(prompt, chatId) {
       env: {
         ...process.env,
         CLAUDE_CODE_HEADLESS: "1",
+        DISABLE_AUTOUPDATER: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -136,13 +171,18 @@ function runClaude(prompt, chatId) {
     let stdout = "";
     let stderr = "";
 
-    proc.stdout.on("data", (d) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+    proc.stdout.on("data", (d) => {
+      stdout += d.toString();
+      console.log(`[chat:${chatId}] stdout chunk:`, d.toString().slice(0, 200));
+    });
+    proc.stderr.on("data", (d) => {
+      stderr += d.toString();
+      console.error(`[chat:${chatId}] stderr:`, d.toString().slice(0, 500));
+    });
 
-    // Timeout
     const timer = setTimeout(() => {
       proc.kill("SIGKILL");
-      reject(new Error(`Claude process timed out after ${REQUEST_TIMEOUT_MS / 1000}s`));
+      reject(new Error(`Timed out after ${REQUEST_TIMEOUT_MS / 1000}s`));
     }, REQUEST_TIMEOUT_MS);
 
     proc.on("error", (err) => {
@@ -153,40 +193,47 @@ function runClaude(prompt, chatId) {
     proc.on("close", (code) => {
       clearTimeout(timer);
 
+      console.log(`[chat:${chatId}] Claude exited code=${code} stdout=${stdout.length}b stderr=${stderr.length}b`);
+
+      // If there's stderr content, include it in debug
+      if (stderr.trim()) {
+        console.error(`[chat:${chatId}] Full stderr:`, stderr.slice(0, 1000));
+      }
+
       if (code !== 0) {
-        const errMsg = stderr.trim() || `Process exited with code ${code}`;
-        console.error(`[chat:${chatId}] Claude error (code ${code}):`, errMsg);
-        reject(new Error(errMsg));
+        const errMsg = stderr.trim() || stdout.trim() || `Process exited with code ${code}`;
+        reject(new Error(errMsg.slice(0, 2000)));
+        return;
+      }
+
+      // If stdout is empty, report it with any stderr context
+      if (!stdout.trim()) {
+        const debugInfo = stderr.trim() ? `Empty response. stderr: ${stderr.slice(0, 500)}` : "(empty response - no output from claude)";
+        resolve(debugInfo);
         return;
       }
 
       try {
         const parsed = JSON.parse(stdout);
-        // The JSON output format returns { type, session_id, result }
-        // result contains the text response
         const sessionIdOut = parsed.session_id;
         if (sessionIdOut) {
           sessions.set(chatId, sessionIdOut);
           console.log(`[chat:${chatId}] Session: ${sessionIdOut}`);
         }
 
-        // Extract the response text
         let responseText = "";
         if (typeof parsed.result === "string") {
           responseText = parsed.result;
         } else if (parsed.result && typeof parsed.result === "object") {
-          // Could be structured; try to get the text
           responseText = parsed.result.text || parsed.result.content || JSON.stringify(parsed.result, null, 2);
         } else {
-          // Fallback: just stringify the whole thing
-          responseText = stdout.trim();
+          responseText = JSON.stringify(parsed, null, 2);
         }
 
-        resolve(responseText);
+        resolve(responseText || "(claude returned empty result)");
       } catch (parseErr) {
-        // If JSON parsing fails, return raw stdout
-        console.warn(`[chat:${chatId}] Could not parse JSON, returning raw output`);
-        resolve(stdout.trim() || "(empty response)");
+        console.warn(`[chat:${chatId}] JSON parse failed, returning raw output`);
+        resolve(stdout.trim());
       }
     });
   });
@@ -198,7 +245,6 @@ function runClaude(prompt, chatId) {
 
 bot.onText(/^\/new$/, async (msg) => {
   if (!isAuthorized(msg)) return unauthorized(msg);
-
   sessions.delete(msg.chat.id);
   await bot.sendMessage(msg.chat.id, "Session cleared. Next message starts a fresh conversation.");
 });
@@ -210,35 +256,54 @@ bot.onText(/^\/status$/, async (msg) => {
   const sessionId = sessions.get(chatId) || "(none)";
   const isProcessing = activeLocks.has(chatId);
 
-  let statusText = `*Status*\n`;
-  statusText += `Session: \`${sessionId}\`\n`;
+  let statusText = `Status:\n`;
+  statusText += `Session: ${sessionId}\n`;
   statusText += `Processing: ${isProcessing ? "yes" : "no"}\n`;
 
-  // Quick claude version check
+  // Claude version
   try {
-    const proc = spawn("claude", ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
-    const version = await new Promise((resolve) => {
-      let out = "";
-      proc.stdout.on("data", (d) => { out += d.toString(); });
-      proc.on("close", () => resolve(out.trim()));
-      setTimeout(() => { proc.kill(); resolve("timeout"); }, 5000);
-    });
+    const version = execSync("claude --version 2>&1", { timeout: 10000 }).toString().trim();
     statusText += `Claude: ${version}\n`;
-  } catch {
-    statusText += `Claude: not found\n`;
+  } catch (e) {
+    statusText += `Claude: error - ${e.message.slice(0, 100)}\n`;
   }
 
-  await bot.sendMessage(chatId, statusText, { parse_mode: "Markdown" });
+  // Auth check
+  try {
+    const credsFile = path.join(process.env.HOME || "/root", ".claude", "credentials.json");
+    if (fs.existsSync(credsFile)) {
+      const creds = JSON.parse(fs.readFileSync(credsFile, "utf8"));
+      const sub = creds.claudeAiOauth?.subscriptionType || "unknown";
+      const tier = creds.claudeAiOauth?.rateLimitTier || "unknown";
+      const expires = creds.claudeAiOauth?.expiresAt;
+      const expiresStr = expires ? new Date(expires).toISOString() : "unknown";
+      statusText += `Auth: ${sub} (${tier})\n`;
+      statusText += `Token expires: ${expiresStr}\n`;
+    } else {
+      statusText += `Auth: no credentials file found\n`;
+    }
+  } catch (e) {
+    statusText += `Auth: error reading credentials\n`;
+  }
+
+  // ANTHROPIC_API_KEY check
+  statusText += `API Key: ${process.env.ANTHROPIC_API_KEY ? "set (" + process.env.ANTHROPIC_API_KEY.slice(0, 12) + "...)" : "not set"}\n`;
+
+  await bot.sendMessage(chatId, statusText);
 });
 
-bot.onText(/^\/session$/, async (msg) => {
+bot.onText(/^\/debug$/, async (msg) => {
   if (!isAuthorized(msg)) return unauthorized(msg);
 
-  const sessionId = sessions.get(msg.chat.id);
-  if (sessionId) {
-    await bot.sendMessage(msg.chat.id, `Current session: \`${sessionId}\``, { parse_mode: "Markdown" });
-  } else {
-    await bot.sendMessage(msg.chat.id, "No active session.");
+  // Run a simple claude test and return raw output
+  try {
+    const result = execSync('claude -p "Say hello" --output-format json 2>&1', {
+      timeout: 30000,
+      env: { ...process.env, CLAUDE_CODE_HEADLESS: "1", DISABLE_AUTOUPDATER: "1" }
+    }).toString();
+    await sendReply(msg.chat.id, `Debug output:\n${result.slice(0, 3000)}`, msg.message_id);
+  } catch (e) {
+    await sendReply(msg.chat.id, `Debug error:\n${e.message.slice(0, 1000)}\n\nstdout: ${e.stdout?.toString().slice(0, 1000) || "none"}\nstderr: ${e.stderr?.toString().slice(0, 1000) || "none"}`, msg.message_id);
   }
 });
 
@@ -247,9 +312,7 @@ bot.onText(/^\/session$/, async (msg) => {
 // ---------------------------------------------------------------------------
 
 bot.on("message", async (msg) => {
-  // Skip commands
   if (msg.text && msg.text.startsWith("/")) return;
-  // Skip non-text messages
   if (!msg.text) return;
   if (!isAuthorized(msg)) return unauthorized(msg);
 
@@ -258,7 +321,6 @@ bot.on("message", async (msg) => {
 
   if (!text) return;
 
-  // Prevent concurrent requests per chat
   if (activeLocks.has(chatId)) {
     await bot.sendMessage(chatId, "Still processing your previous message. Please wait.", {
       reply_to_message_id: msg.message_id,
@@ -293,7 +355,6 @@ function shutdown(signal) {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-// Catch unhandled errors so the process doesn't crash
 process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection:", err);
 });
