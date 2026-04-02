@@ -1,12 +1,7 @@
-FROM node:20-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM ghcr.io/jafffff/claude-telegram-bridge-base:latest
 
 WORKDIR /app
-COPY package.json ./
-RUN npm install --production
-COPY telegram-bridge.js ./
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-ENV DISABLE_AUTOUPDATER=1
-
-CMD ["node", "telegram-bridge.js"]
+CMD ["/app/start.sh"]
