@@ -1,12 +1,10 @@
 {
   "name": "claude-telegram-bridge",
-  "version": "1.0.0",
-  "description": "Telegram bot bridge for Claude Code",
+  "version": "2.0.0",
   "main": "telegram-bridge.js",
-  "scripts": {
-    "start": "node telegram-bridge.js"
-  },
+  "scripts": { "start": "node telegram-bridge.js" },
   "dependencies": {
-    "node-telegram-bot-api": "^0.66.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "@anthropic-ai/sdk": "^0.39.0"
   }
 }
