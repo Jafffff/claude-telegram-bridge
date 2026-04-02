@@ -1,5 +1,4 @@
 const TelegramBot = require("node-telegram-bot-api");
-const Anthropic = require("@anthropic-ai/sdk");
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -7,20 +6,41 @@ const Anthropic = require("@anthropic-ai/sdk");
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 
-// Prefer CLAUDE_ACCESS_TOKEN (OAuth), fall back to ANTHROPIC_API_KEY
-const API_KEY = process.env.CLAUDE_ACCESS_TOKEN || process.env.ANTHROPIC_API_KEY;
-if (!API_KEY) { console.error("CLAUDE_ACCESS_TOKEN or ANTHROPIC_API_KEY required"); process.exit(1); }
-console.log(`Auth: ${API_KEY.slice(0, 25)}...`);
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+if (!OPENROUTER_API_KEY) { console.error("OPENROUTER_API_KEY required"); process.exit(1); }
 
 const AUTHORIZED_USER_ID = parseInt(process.env.AUTHORIZED_USER_ID || "6678076145", 10);
 const TELEGRAM_MAX_LENGTH = 4096;
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
+const MODEL = process.env.CLAUDE_MODEL || "anthropic/claude-sonnet-4-5";
 
-const client = new Anthropic({ apiKey: API_KEY });
-
-console.log(`Starting Claude Telegram Bridge`);
+console.log(`Starting Claude Telegram Bridge (via OpenRouter)`);
 console.log(`Model: ${MODEL}`);
-console.log(`API Key: ${API_KEY.slice(0, 20)}...`);
+
+// ---------------------------------------------------------------------------
+// OpenRouter API call
+// ---------------------------------------------------------------------------
+async function callClaude(messages, maxTokens = 4096) {
+  const body = JSON.stringify({
+    model: MODEL,
+    max_tokens: maxTokens,
+    messages,
+  });
+
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://github.com/Jafffff/claude-telegram-bridge",
+      "X-Title": "Claude Telegram Bridge",
+    },
+    body,
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(data)}`);
+  return data.choices[0]?.message?.content || "(no response)";
+}
 
 // ---------------------------------------------------------------------------
 // State — per-user conversation history
@@ -92,7 +112,7 @@ bot.onText(/^\/status$/, async (msg) => {
   if (!isAuthorized(msg)) return bot.sendMessage(msg.chat.id, "Unauthorized.");
   const msgs = conversations.get(msg.chat.id) || [];
   await bot.sendMessage(msg.chat.id,
-    `Model: ${MODEL}\nAPI Key: ${API_KEY.slice(0, 20)}...\nConversation: ${msgs.length} messages`
+    `Model: ${MODEL}\nRouter: OpenRouter\nConversation: ${msgs.length} messages`
   );
 });
 
@@ -100,12 +120,8 @@ bot.onText(/^\/debug$/, async (msg) => {
   if (!isAuthorized(msg)) return bot.sendMessage(msg.chat.id, "Unauthorized.");
   const typingInterval = startTypingLoop(msg.chat.id);
   try {
-    const res = await client.messages.create({
-      model: MODEL,
-      max_tokens: 50,
-      messages: [{ role: "user", content: "Say exactly: HELLO WORKING" }]
-    });
-    await sendReply(msg.chat.id, `Debug OK: ${res.content[0]?.text}`, msg.message_id);
+    const text = await callClaude([{ role: "user", content: "Say exactly: HELLO WORKING" }], 50);
+    await sendReply(msg.chat.id, `Debug OK: ${text}`, msg.message_id);
   } catch (err) {
     await sendReply(msg.chat.id, `Debug error: ${err.message}`, msg.message_id);
   } finally {
@@ -135,14 +151,7 @@ bot.on("message", async (msg) => {
     const history = conversations.get(chatId) || [];
     history.push({ role: "user", content: msg.text });
 
-    const res = await client.messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      system: "You are a helpful AI assistant. You have access to all the user's API credentials and tools via environment variables.",
-      messages: history
-    });
-
-    const responseText = res.content[0]?.text || "(no response)";
+    const responseText = await callClaude(history);
     history.push({ role: "assistant", content: responseText });
 
     // Keep last 20 messages to avoid token overflow
