@@ -1,4 +1,5 @@
 const TelegramBot = require("node-telegram-bot-api");
+const { spawn } = require("child_process");
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -6,46 +7,65 @@ const TelegramBot = require("node-telegram-bot-api");
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-if (!OPENROUTER_API_KEY) { console.error("OPENROUTER_API_KEY required"); process.exit(1); }
+if (!process.env.CLAUDE_OAUTH_CREDENTIALS) {
+  console.error("CLAUDE_OAUTH_CREDENTIALS required");
+  process.exit(1);
+}
 
 const AUTHORIZED_USER_ID = parseInt(process.env.AUTHORIZED_USER_ID || "6678076145", 10);
 const TELEGRAM_MAX_LENGTH = 4096;
-const MODEL = process.env.CLAUDE_MODEL || "anthropic/claude-sonnet-4-5";
 
-console.log(`Starting Claude Telegram Bridge (via OpenRouter)`);
-console.log(`Model: ${MODEL}`);
+console.log("Starting Claude Telegram Bridge (Claude Code CLI)");
 
 // ---------------------------------------------------------------------------
-// OpenRouter API call
+// Call claude CLI
 // ---------------------------------------------------------------------------
-async function callClaude(messages, maxTokens = 4096) {
-  const body = JSON.stringify({
-    model: MODEL,
-    max_tokens: maxTokens,
-    messages,
-  });
+function callClaude(messages) {
+  return new Promise((resolve, reject) => {
+    // Build prompt: include conversation history so Claude has context
+    let prompt;
+    if (messages.length === 1) {
+      prompt = messages[0].content;
+    } else {
+      const history = messages.slice(0, -1)
+        .map(m => `${m.role === "user" ? "Human" : "Assistant"}: ${m.content}`)
+        .join("\n\n");
+      const last = messages[messages.length - 1].content;
+      prompt = `${history}\n\nHuman: ${last}\n\nRespond to the Human's latest message, taking the conversation history into account.`;
+    }
 
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://github.com/Jafffff/claude-telegram-bridge",
-      "X-Title": "Claude Telegram Bridge",
-    },
-    body,
-  });
+    const child = spawn("claude", ["-p", prompt], {
+      env: { ...process.env, HOME: "/root", DISABLE_AUTOUPDATER: "1" },
+    });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(data)}`);
-  return data.choices[0]?.message?.content || "(no response)";
+    let out = "";
+    let err = "";
+    child.stdout.on("data", d => { out += d; });
+    child.stderr.on("data", d => { err += d; });
+
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("Timed out after 2 minutes"));
+    }, 120000);
+
+    child.on("close", code => {
+      clearTimeout(timer);
+      const text = out.trim();
+      if (text) resolve(text);
+      else reject(new Error(err.trim() || `claude exited with code ${code}`));
+    });
+
+    child.on("error", err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
-// State — per-user conversation history
+// State
 // ---------------------------------------------------------------------------
-const conversations = new Map(); // chatId -> messages[]
+const conversations = new Map();
 
 // ---------------------------------------------------------------------------
 // Bot setup
@@ -111,16 +131,14 @@ bot.onText(/^\/new$/, async (msg) => {
 bot.onText(/^\/status$/, async (msg) => {
   if (!isAuthorized(msg)) return bot.sendMessage(msg.chat.id, "Unauthorized.");
   const msgs = conversations.get(msg.chat.id) || [];
-  await bot.sendMessage(msg.chat.id,
-    `Model: ${MODEL}\nRouter: OpenRouter\nConversation: ${msgs.length} messages`
-  );
+  await bot.sendMessage(msg.chat.id, `Backend: Claude Code CLI (Max plan)\nConversation: ${msgs.length} messages`);
 });
 
 bot.onText(/^\/debug$/, async (msg) => {
   if (!isAuthorized(msg)) return bot.sendMessage(msg.chat.id, "Unauthorized.");
   const typingInterval = startTypingLoop(msg.chat.id);
   try {
-    const text = await callClaude([{ role: "user", content: "Say exactly: HELLO WORKING" }], 50);
+    const text = await callClaude([{ role: "user", content: "Say exactly: HELLO WORKING" }]);
     await sendReply(msg.chat.id, `Debug OK: ${text}`, msg.message_id);
   } catch (err) {
     await sendReply(msg.chat.id, `Debug error: ${err.message}`, msg.message_id);
@@ -154,7 +172,6 @@ bot.on("message", async (msg) => {
     const responseText = await callClaude(history);
     history.push({ role: "assistant", content: responseText });
 
-    // Keep last 20 messages to avoid token overflow
     if (history.length > 20) history.splice(0, history.length - 20);
     conversations.set(chatId, history);
 
