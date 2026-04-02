@@ -1,16 +1,33 @@
 const TelegramBot = require("node-telegram-bot-api");
 const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+
+// ---------------------------------------------------------------------------
+// Write OAuth credentials so claude CLI can auth without interactive login
+// ---------------------------------------------------------------------------
+if (!process.env.CLAUDE_OAUTH_CREDENTIALS) {
+  console.error("CLAUDE_OAUTH_CREDENTIALS required");
+  process.exit(1);
+}
+const claudeDir = path.join(os.homedir(), ".claude");
+fs.mkdirSync(claudeDir, { recursive: true });
+fs.writeFileSync(path.join(claudeDir, "credentials.json"), process.env.CLAUDE_OAUTH_CREDENTIALS, { mode: 0o600 });
+fs.writeFileSync(path.join(os.homedir(), ".claude.json"), JSON.stringify({
+  skipDangerousModePermissionPrompt: true,
+  permissions: { allow: ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)"] }
+}));
+console.log("OAuth credentials written.");
+
+// Path to claude CLI installed as local npm dep
+const CLAUDE_BIN = path.join(__dirname, "node_modules", ".bin", "claude");
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 if (!TELEGRAM_TOKEN) { console.error("TELEGRAM_BOT_TOKEN required"); process.exit(1); }
-
-if (!process.env.CLAUDE_OAUTH_CREDENTIALS) {
-  console.error("CLAUDE_OAUTH_CREDENTIALS required");
-  process.exit(1);
-}
 
 const AUTHORIZED_USER_ID = parseInt(process.env.AUTHORIZED_USER_ID || "6678076145", 10);
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -34,7 +51,7 @@ function callClaude(messages) {
       prompt = `${history}\n\nHuman: ${last}\n\nRespond to the Human's latest message, taking the conversation history into account.`;
     }
 
-    const child = spawn("claude", ["-p", prompt], {
+    const child = spawn(CLAUDE_BIN, ["-p", prompt], {
       env: { ...process.env, HOME: "/root", DISABLE_AUTOUPDATER: "1" },
     });
 
