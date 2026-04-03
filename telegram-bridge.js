@@ -54,7 +54,8 @@ function callClaude(messages) {
 
     // Extract access token for env var auth (belt-and-suspenders with .credentials.json)
     const oauthToken = JSON.parse(process.env.CLAUDE_OAUTH_CREDENTIALS).claudeAiOauth.accessToken;
-    const child = spawn(CLAUDE_BIN, ["-p", prompt], {
+    const model = process.env.CLAUDE_MODEL || "claude-sonnet-4-5-20241022";
+    const child = spawn(CLAUDE_BIN, ["-p", prompt, "--model", model], {
       env: { ...process.env, HOME: "/root", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_OAUTH_TOKEN: oauthToken },
     });
 
