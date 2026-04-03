@@ -1,17 +1,15 @@
 FROM node:20-slim
-LABEL language="bash"
-
-ENV HOME=/root
-ENV DISABLE_AUTOUPDATER=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-RUN mkdir -p /data
+COPY package.json .npmrc ./
+RUN npm install
+COPY telegram-bridge.js ./
 
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+ENV HOME=/root
+ENV DISABLE_AUTOUPDATER=1
 
-CMD ["/app/start.sh"]
+CMD ["node", "telegram-bridge.js"]
