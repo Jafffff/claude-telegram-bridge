@@ -52,4 +52,4 @@ if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
 fi
 
 echo "Starting Claude with channels..."
-exec claude --channels
+exec claude --channels telegram
