@@ -13,7 +13,8 @@ if (!process.env.CLAUDE_OAUTH_CREDENTIALS) {
 }
 const claudeDir = path.join(os.homedir(), ".claude");
 fs.mkdirSync(claudeDir, { recursive: true });
-fs.writeFileSync(path.join(claudeDir, "credentials.json"), process.env.CLAUDE_OAUTH_CREDENTIALS, { mode: 0o600 });
+// Note: Claude Code on Linux expects ".credentials.json" (leading dot)
+fs.writeFileSync(path.join(claudeDir, ".credentials.json"), process.env.CLAUDE_OAUTH_CREDENTIALS, { mode: 0o600 });
 fs.writeFileSync(path.join(os.homedir(), ".claude.json"), JSON.stringify({
   skipDangerousModePermissionPrompt: true,
   permissions: { allow: ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)"] }
@@ -51,8 +52,10 @@ function callClaude(messages) {
       prompt = `${history}\n\nHuman: ${last}\n\nRespond to the Human's latest message, taking the conversation history into account.`;
     }
 
+    // Extract access token for env var auth (belt-and-suspenders with .credentials.json)
+    const oauthToken = JSON.parse(process.env.CLAUDE_OAUTH_CREDENTIALS).claudeAiOauth.accessToken;
     const child = spawn(CLAUDE_BIN, ["-p", prompt], {
-      env: { ...process.env, HOME: "/root", DISABLE_AUTOUPDATER: "1" },
+      env: { ...process.env, HOME: "/root", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_OAUTH_TOKEN: oauthToken },
     });
 
     let out = "";
