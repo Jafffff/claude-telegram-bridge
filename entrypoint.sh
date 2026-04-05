@@ -45,5 +45,11 @@ if [ ! -f /root/.claude/plugins/installed_plugins.json ]; then
   claude plugin install telegram@claude-plugins-official 2>&1 || true
 fi
 
+# CRITICAL: Unset OpenRouter vars that hijack Claude Code API calls
+# These are set for OpenClaw but break Claude Code CLI auth
+unset ANTHROPIC_BASE_URL
+unset ANTHROPIC_API_KEY
+unset NODE_OPTIONS
+
 echo "Starting Claude Code with Telegram channel..."
 exec claude --channels plugin:telegram@claude-plugins-official
