@@ -14,15 +14,36 @@ fi
 echo "$CLAUDE_OAUTH_CREDENTIALS" > "$NODE_HOME/.claude/.credentials.json"
 chmod 600 "$NODE_HOME/.claude/.credentials.json"
 
-# Write claude settings (auto-accept tools)
+# Write claude.json — MUST include hasCompletedOnboarding to skip interactive onboarding
+# and hasTrustDialogAccepted for the working directory to skip trust prompt
 cat > "$NODE_HOME/.claude.json" <<SETTINGS
 {
+  "hasCompletedOnboarding": true,
+  "lastOnboardingVersion": "2.1.92",
   "skipDangerousModePermissionPrompt": true,
   "permissions": {
     "allow": ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)"]
+  },
+  "projects": {
+    "/home/node": {
+      "allowedTools": [],
+      "hasTrustDialogAccepted": true,
+      "hasCompletedProjectOnboarding": true
+    }
   }
 }
 SETTINGS
+
+# Also write settings.json for belt-and-suspenders
+mkdir -p "$NODE_HOME/.claude"
+cat > "$NODE_HOME/.claude/settings.json" <<SETTINGS2
+{
+  "permissions": {
+    "allow": ["Bash(*)", "Read(*)", "Write(*)", "Edit(*)", "Glob(*)", "Grep(*)", "WebFetch(*)", "WebSearch(*)"]
+  },
+  "skipDangerousModePermissionPrompt": true
+}
+SETTINGS2
 
 # Configure Telegram bot token
 echo "TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN" > "$NODE_HOME/.claude/channels/telegram/.env"
@@ -55,22 +76,7 @@ unset ANTHROPIC_BASE_URL
 unset ANTHROPIC_API_KEY
 unset NODE_OPTIONS
 
-# Debug: verify environment before launching
-echo "=== DEBUG: Pre-launch environment ==="
-echo "HOME=$NODE_HOME"
-echo "TELEGRAM_BOT_TOKEN set: $([ -n "$TELEGRAM_BOT_TOKEN" ] && echo 'yes' || echo 'NO')"
-echo "ANTHROPIC_BASE_URL set: $([ -n "$ANTHROPIC_BASE_URL" ] && echo 'YES (BAD)' || echo 'unset (good)')"
-echo "bun location: $(which bun 2>/dev/null || echo 'NOT FOUND')"
-echo "claude location: $(which claude 2>/dev/null || echo 'NOT FOUND')"
-echo ".env contents: $(cat $NODE_HOME/.claude/channels/telegram/.env 2>/dev/null)"
-echo "access.json exists: $([ -f $NODE_HOME/.claude/channels/telegram/access.json ] && echo 'yes' || echo 'no')"
-echo "credentials.json exists: $([ -f $NODE_HOME/.claude/.credentials.json ] && echo 'yes' || echo 'no')"
-echo "installed_plugins.json exists: $([ -f $NODE_HOME/.claude/plugins/installed_plugins.json ] && echo 'yes' || echo 'no')"
-ls -la "$NODE_HOME/.claude/plugins/" 2>/dev/null || echo "No plugins dir"
-echo "=== END DEBUG ==="
-
 echo "Starting Claude Code with Telegram channel..."
 # Drop to node user + allocate pseudo-TTY via 'script'
 # --dangerously-skip-permissions requires non-root
-# Pass --debug to see channel/MCP server startup details
-exec su -s /bin/bash node -c "export HOME=$NODE_HOME && exec script -qc 'claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions --debug' /dev/null"
+exec su -s /bin/bash node -c "export HOME=$NODE_HOME && exec script -qc 'claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions' /dev/null"
