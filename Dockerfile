@@ -19,8 +19,7 @@ RUN mkdir -p /home/node/.claude /home/node/.claude/channels/telegram \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-USER node
+# Entrypoint runs as root, drops to 'node' user via su for Claude Code
 WORKDIR /home/node
-ENV HOME=/home/node
 
 CMD ["/entrypoint.sh"]
