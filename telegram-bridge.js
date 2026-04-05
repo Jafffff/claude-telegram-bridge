@@ -121,8 +121,10 @@ async function callClaude(messages) {
 
   // Get a fresh access token (auto-refreshes if expired)
   const oauthToken = await ensureFreshToken();
-  const model = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
-  const child = spawn(CLAUDE_BIN, ["-p", prompt, "--model", model], {
+  const args = ["-p", prompt];
+  const model = process.env.CLAUDE_MODEL;
+  if (model) args.push("--model", model);
+  const child = spawn(CLAUDE_BIN, args, {
     env: { ...process.env, HOME: "/root", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_OAUTH_TOKEN: oauthToken },
   });
 
