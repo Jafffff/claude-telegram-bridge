@@ -5,6 +5,6 @@
   "scripts": { "start": "node telegram-bridge.js" },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
-    "@anthropic-ai/claude-code": "latest"
+    "@anthropic-ai/claude-code": "^2.1.92"
   }
 }

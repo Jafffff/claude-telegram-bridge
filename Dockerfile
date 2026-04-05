@@ -28,6 +28,7 @@ ENV PATH="/opt/whisper/bin:$PATH"
 WORKDIR /app
 
 COPY package.json .npmrc ./
+ARG CACHEBUST=1
 RUN npm install
 COPY telegram-bridge.js CLAUDE.md ./
 
