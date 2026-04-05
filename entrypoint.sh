@@ -52,4 +52,6 @@ unset ANTHROPIC_API_KEY
 unset NODE_OPTIONS
 
 echo "Starting Claude Code with Telegram channel..."
-exec claude --channels plugin:telegram@claude-plugins-official
+# Use 'script' to allocate a pseudo-TTY — channels requires an interactive session
+# Without a TTY, Claude Code falls back to --print mode which doesn't support channels
+exec script -qc "claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions" /dev/null

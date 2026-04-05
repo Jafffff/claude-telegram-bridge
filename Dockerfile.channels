@@ -1,7 +1,7 @@
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git curl unzip \
+    ca-certificates git curl unzip bsdutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Bun (required for Telegram plugin)
