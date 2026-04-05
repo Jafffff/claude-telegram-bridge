@@ -46,17 +46,31 @@ chown -R node:node "$NODE_HOME"
 # Install plugin marketplace + telegram plugin as node user
 if [ ! -f "$NODE_HOME/.claude/plugins/installed_plugins.json" ]; then
   echo "Installing Telegram plugin..."
-  su -s /bin/bash node -c "claude plugin marketplace add https://github.com/anthropics/claude-plugins-official 2>&1" || true
-  su -s /bin/bash node -c "claude plugin install telegram@claude-plugins-official 2>&1" || true
+  su -s /bin/bash node -c "HOME=$NODE_HOME claude plugin marketplace add https://github.com/anthropics/claude-plugins-official 2>&1" || true
+  su -s /bin/bash node -c "HOME=$NODE_HOME claude plugin install telegram@claude-plugins-official 2>&1" || true
 fi
 
 # CRITICAL: Unset OpenRouter vars that hijack Claude Code API calls
 unset ANTHROPIC_BASE_URL
 unset ANTHROPIC_API_KEY
 unset NODE_OPTIONS
-export HOME="$NODE_HOME"
+
+# Debug: verify environment before launching
+echo "=== DEBUG: Pre-launch environment ==="
+echo "HOME=$NODE_HOME"
+echo "TELEGRAM_BOT_TOKEN set: $([ -n "$TELEGRAM_BOT_TOKEN" ] && echo 'yes' || echo 'NO')"
+echo "ANTHROPIC_BASE_URL set: $([ -n "$ANTHROPIC_BASE_URL" ] && echo 'YES (BAD)' || echo 'unset (good)')"
+echo "bun location: $(which bun 2>/dev/null || echo 'NOT FOUND')"
+echo "claude location: $(which claude 2>/dev/null || echo 'NOT FOUND')"
+echo ".env contents: $(cat $NODE_HOME/.claude/channels/telegram/.env 2>/dev/null)"
+echo "access.json exists: $([ -f $NODE_HOME/.claude/channels/telegram/access.json ] && echo 'yes' || echo 'no')"
+echo "credentials.json exists: $([ -f $NODE_HOME/.claude/.credentials.json ] && echo 'yes' || echo 'no')"
+echo "installed_plugins.json exists: $([ -f $NODE_HOME/.claude/plugins/installed_plugins.json ] && echo 'yes' || echo 'no')"
+ls -la "$NODE_HOME/.claude/plugins/" 2>/dev/null || echo "No plugins dir"
+echo "=== END DEBUG ==="
 
 echo "Starting Claude Code with Telegram channel..."
 # Drop to node user + allocate pseudo-TTY via 'script'
 # --dangerously-skip-permissions requires non-root
-exec su -s /bin/bash node -c 'exec script -qc "claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions" /dev/null'
+# Pass --debug to see channel/MCP server startup details
+exec su -s /bin/bash node -c "export HOME=$NODE_HOME && exec script -qc 'claude --channels plugin:telegram@claude-plugins-official --dangerously-skip-permissions --debug' /dev/null"
