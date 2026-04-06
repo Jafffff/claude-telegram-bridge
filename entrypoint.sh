@@ -61,6 +61,13 @@ cat > "$NODE_HOME/.claude/channels/telegram/access.json" <<ACCESS
 }
 ACCESS
 
+# Persistent volume at /home/node/data — survives restarts
+# Symlink session history and inbox so they persist
+mkdir -p "$NODE_HOME/data/sessions" "$NODE_HOME/data/inbox" "$NODE_HOME/data/projects"
+ln -sfn "$NODE_HOME/data/sessions" "$NODE_HOME/.claude/sessions"
+ln -sfn "$NODE_HOME/data/inbox" "$NODE_HOME/.claude/channels/telegram/inbox"
+ln -sfn "$NODE_HOME/data/projects" "$NODE_HOME/.claude/projects"
+
 # Fix ownership for node user
 chown -R node:node "$NODE_HOME"
 
