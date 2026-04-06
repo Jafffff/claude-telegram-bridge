@@ -7,8 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Bun globally (not per-user)
 RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 
-# Install Claude Code CLI and gogcli globally
-RUN npm install -g @anthropic-ai/claude-code@latest gogcli@0.1.0
+# Install Claude Code CLI globally
+RUN npm install -g @anthropic-ai/claude-code@latest
+
+# Install gogcli (Google Suite CLI) binary
+RUN curl -fsSL https://github.com/steipete/gogcli/releases/download/v0.12.0/gogcli_0.12.0_linux_amd64.tar.gz \
+    | tar xz -C /usr/local/bin/ gog && chmod +x /usr/local/bin/gog
 
 ENV DISABLE_AUTOUPDATER=1
 
